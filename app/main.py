@@ -6,7 +6,7 @@ Main application entry point
 from fastapi import FastAPI
 import secrets
 from datetime import datetime, timezone
-
+from app.core.config import get_settings
 from app.models.schemas import (
     StashRequest,
     StashResponse,
@@ -17,6 +17,9 @@ from app.models.schemas import (
 
 # Create the FastAPI application instance
 # This is the core object that handles all routing and middleware
+
+# Get settings instance
+settings = get_settings()
 
 app = FastAPI(
     title="Stash",
@@ -38,7 +41,11 @@ async def root():
     Health check endpoint.
     Returns a simple message to confirm the API is running
     """
-    return {"status": "ok", "message": "Stash is running"}
+    return {
+        "status": "ok",
+        "message": "Stash is running",
+        "mode": settings.stash_mode,
+    }
 
 @app.post("/stash", response_model=StashResponse)
 async def stash(request: StashRequest):
