@@ -7,8 +7,8 @@ These models serve 3 purposes:
 3. Generate OpenAPI documentation automatically. 
 """
 
-from pydantic import BaseModel, Field, field_validator
-from typing  import Any
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing  import Any, Optional
 from datetime import datetime
 
 # ============================================================
@@ -49,17 +49,58 @@ class StashRequest(BaseModel):
             raise ValueError('TTL must be at least 1 second')
         return v
     
-class ExtendRequest(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "data": {
+                        "task": "summarize_document",
+                        "partial_result": "The document discusses...",
+                        "step": 2
+                    },
+                    "ttl": 3600
+                }
+            ]
+        }
+    }
+    
+class UpdateRequest(BaseModel):
     """
-    Request body for PATCH /extend/{memory_id} endpoint.
+    Request body for PATCH /update/{memory_id} endpoint.
     """
+    data: Optional[Any] = Field(default=None, description="Replace entire stored data with this value.")
+    extra_time: Optional[int] = Field(default=None, ge=1, le=86400, description="Extend TTL in seconds")
 
-    extra_seconds: int = Field(
-        ...,
-        ge=1,
-        le=86400,
-        description="Addtional seconds to add to TTL"
-    )
+    @model_validator(mode="after")
+    def validate_request(self):
+        """Ensure request has at least one field."""
+        if self.data is None and self.extra_time is None:
+            raise ValueError("Must provide at least one of: data, extra_time")
+        return self
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "summary": "Replace data only",
+                    "value": {
+                        "data": {"task": "summarize this document", "progress": 0.75, "result": "partial output"}
+                    }
+                },
+                {
+                    "summary": "Extend TTL only",
+                    "value": {"extra_time": 1800}
+                },
+                {
+                    "summary": "Replace data and extend TTL",
+                    "value": {
+                        "data": {"task": "summarize", "progress": 1.0, "status": "complete"},
+                        "extra_time": 3600
+                    }
+                }
+            ]
+        }
+    }
 
 # ============================================================
 # RESPONSE MODELS (what we send back to the client)
@@ -91,17 +132,17 @@ class RecallResponse(BaseModel):
     """
 
     memory_id: str = Field(..., description="The requested memory_id")
-    data: Any = Field(..., description="The stored JSON data")
+    data: Any = Field(..., description="The stored data")
     ttl_remaining: int = Field(..., description="Seconds until expiration")
 
-class ExtendResponse(BaseModel):
+class UpdateResponse(BaseModel):
     """
-    Response for successful recall operation.
+    Response for successful update operation.
     """
 
-    memory_id: str = Field(..., description="The extended memory_id")
-    new_ttl: int = Field(..., description="New TTL in seconds")
-    expires_at: datetime = Field(..., description="New expiration timestamp")
+    memory_id: str = Field(..., description="The memory_id")
+    ttl_remaining: int = Field(..., description="Seconds until expiration")
+    expires_at: datetime = Field(..., description="Expiration timestamp")
 
 class ErrorResponse(BaseModel):
     """
@@ -110,27 +151,3 @@ class ErrorResponse(BaseModel):
 
     error: str = Field(..., description="Error Type")
     detail: str = Field(..., description="Human-readable error message")
-
-# ============================================================
-# MODEL CONFIGURATION
-# ============================================================
-
-class StashRequest(StashRequest):
-    """
-    Add example to the schema for documentation.
-    """
-
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "data": {
-                        "task": "summarize_document",
-                        "partial_result": "The document discusses...",
-                        "step": 2
-                    },
-                    "ttl": 3600
-                }
-            ]
-        }
-    }

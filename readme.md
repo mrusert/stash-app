@@ -1,95 +1,292 @@
-# FlashMemory — Ephemeral Agent RAM
+# Stash — Working Memory for AI Developers and Agents
 
-## 1. Project Vision
-**FlashMemory** is a high-speed, zero-config, ephemeral key-value store designed for AI agents. It functions as "Short-Term RAM" for agentic workflows, allowing agents to stash intermediate data, task states, or large context blocks without the overhead of a persistent database.
+> Zero-Config Storage · Local-First · Ephemeral by Design
 
-**The Golden Rule:** This is a "Trash-First" database. If data isn't retrieved or extended within the TTL (Time-To-Live), it vanishes forever.
+## What is Stash?
 
----
+**Stash** is a fast, lightweight, ephemeral key-value store designed for AI developers and agents. It functions as "working memory" for your workflows—a place to park intermediate data, task states, or context blocks without the overhead of a persistent database.
 
-## 2. Tech Stack & Infrastructure
-* **Backend:** FastAPI (Python 3.11+)
-* **Primary Store:** Redis (In-memory, native TTL support)
-* **Schema/Validation:** Pydantic v2
-* **Containerization:** Docker & Docker Compose
-* **Environment:** Redis-py for async connection handling
+**The Golden Rule:** This is a "Trash-First" database. If data isn't retrieved or extended within the TTL (Time-To-Live), it vanishes forever. That's not a bug—it's the point.
 
 ---
 
-## 3. Architecture & Security Decisions
+## Why Stash?
 
-### Isolated Namespaces (Multi-tenancy)
-To prevent data leakage, the service implements **Namespace Isolation**. 
-* Every request must include an `X-API-KEY`.
-* The backend maps the API Key to a `user_id`.
-* All Redis keys are stored with a prefix: `user:{user_id}:{memory_id}`.
-* **Pro:** Even if a `memory_id` is guessed, it cannot be accessed without the matching API Key.
+| Problem | Stash Solution |
+| :--- | :--- |
+| Need somewhere to park intermediate results | TTL-based storage that auto-cleans |
+| Don't want to spin up infrastructure just to prototype | Zero-config local mode (no Docker required) |
+| Worried about data leaking between users/agents | Namespace isolation by API key |
+| Need to scale later without rewriting code | Same API from laptop to cloud |
 
-### Tiered Feature Logic
-The service is designed to support three tiers of service:
+---
 
-| Feature | Free Tier | Pro Tier | Enterprise Tier |
+## Quick Start
+
+### Local Mode (Zero Dependencies)
+
+```bash
+pip install stash-memory
+
+# Start the server
+stash serve
+```
+
+That's it. No Docker. No Redis. Just works.
+
+```python
+# Or embed directly in your Python app
+from stash_memory import Stash
+
+stash = Stash()  # Uses SQLite, runs in-process
+stash.set("my-key", {"task": "summarize", "progress": 0.5}, ttl=3600)
+data = stash.get("my-key")
+```
+
+### Server Mode (Multi-Process/Multi-Agent)
+
+```bash
+# With Redis backend for production workloads
+stash serve --backend redis --redis-url redis://localhost:6379
+```
+
+### Docker Mode (Team/Staging)
+
+```bash
+docker run -p 8000:8000 stashmemory/stash
+```
+
+### Hosted Mode (Production)
+
+```bash
+# Just an API key—we handle the infrastructure
+curl -X POST https://api.stash.memory/stash \
+  -H "X-API-KEY: sk_live_..." \
+  -d '{"data": {"task": "summarize"}, "ttl": 3600}'
+```
+
+---
+
+## The Stash Journey: Local to Cloud
+
+Stash is designed to grow with you. Start local, scale when ready.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         YOUR STASH JOURNEY                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐          │
+│  │ EMBEDDED │ -> │  LOCAL   │ -> │  DOCKER  │ -> │  HOSTED  │          │
+│  │          │    │  SERVER  │    │          │    │          │          │
+│  └──────────┘    └──────────┘    └──────────┘    └──────────┘          │
+│                                                                         │
+│  pip install    stash serve     docker-compose   api.stash.memory      │
+│  + import                       up                                      │
+│                                                                         │
+│  Best for:      Best for:       Best for:        Best for:             │
+│  - Prototyping  - Local dev     - Teams          - Production          │
+│  - Single agent - Multi-agent   - CI/CD          - Scale               │
+│  - Tutorials    - Testing       - Staging        - No ops              │
+│                                                                         │
+│  Zero config    Zero config     Redis included   Fully managed         │
+│  SQLite backend SQLite/Redis    Persistent opts  SLA guaranteed        │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**The same code works everywhere:**
+
+```python
+from stash_memory import Stash
+
+# Local development (auto-detects best backend)
+stash = Stash()
+
+# Explicit local SQLite
+stash = Stash(backend="sqlite")
+
+# Local Redis
+stash = Stash(backend="redis", redis_url="redis://localhost:6379")
+
+# Hosted (just add API key)
+stash = Stash(api_key="sk_live_...")
+```
+
+---
+
+## API Reference
+
+### `POST /stash`
+Store a JSON block with automatic expiration.
+
+**Request:**
+```bash
+curl -X POST http://localhost:8000/stash \
+  -H "Content-Type: application/json" \
+  -H "X-API-KEY: your_key" \
+  -d '{
+    "data": {"task": "summarize", "context": "..."},
+    "ttl": 3600
+  }'
+```
+
+**Response:**
+```json
+{
+  "memory_id": "xK9mP2nQ",
+  "ttl": 3600,
+  "expires_at": "2024-01-15T11:30:00Z"
+}
+```
+
+### `GET /recall/{memory_id}`
+Retrieve stored data.
+
+**Response:**
+```json
+{
+  "memory_id": "xK9mP2nQ",
+  "data": {"task": "summarize", "context": "..."},
+  "ttl_remaining": 3245
+}
+```
+
+### `PATCH /update/{memory_id}`
+Update stored data, extend TTL, or both.
+
+**Replace entire data:**
+```bash
+curl -X PATCH http://localhost:8000/update/xK9mP2nQ \
+  -H "Content-Type: application/json" \
+  -H "X-API-KEY: your_key" \
+  -d '{"data": {"task": "summarize", "progress": 0.75}}'
+```
+
+**Extend TTL only:**
+```bash
+curl -X PATCH http://localhost:8000/update/xK9mP2nQ \
+  -H "Content-Type: application/json" \
+  -H "X-API-KEY: your_key" \
+  -d '{"extra_seconds": 1800}'
+```
+
+**Update data AND extend TTL:**
+```bash
+curl -X PATCH http://localhost:8000/update/xK9mP2nQ \
+  -H "Content-Type: application/json" \
+  -H "X-API-KEY: your_key" \
+  -d '{"data": {"task": "summarize", "progress": 1.0}, "extra_seconds": 3600}'
+```
+
+**Response:**
+```json
+{
+  "memory_id": "xK9mP2nQ",
+  "ttl_remaining": 5045,
+  "expires_at": "2024-01-15T12:30:00Z"
+}
+```
+
+**Rules:**
+- Must provide at least one of: `data` or `extra_seconds`
+- `data` can be any valid JSON (string, number, object, array, etc.)
+
+**Typical workflow for modifying existing data:**
+```python
+# Fetch current data
+current = requests.get(f"/recall/{memory_id}").json()["data"]
+
+# Modify locally
+current["new_field"] = "new value"
+
+# Save back
+requests.patch(f"/update/{memory_id}", json={"data": current})
+```
+
+### `DELETE /forget/{memory_id}`
+Immediately delete a memory (don't wait for TTL).
+
+---
+
+## Architecture
+
+### Namespace Isolation (Multi-Tenancy)
+
+Every request requires an `X-API-KEY`. The backend maps keys to users, and all storage keys are prefixed:
+
+```
+user:{user_id}:{memory_id}
+```
+
+Even if someone guesses a `memory_id`, they can't access it without the matching API key.
+
+### Storage Backends
+
+| Backend | Best For | Persistence | Config Required |
+| :--- | :--- | :--- | :--- |
+| **Memory** | Testing, embedding | None (process lifetime) | None |
+| **SQLite** | Local dev, single-node | File-based | None |
+| **Redis** | Production, multi-node | Configurable | Redis URL |
+
+### Tiered Limits (Hosted)
+
+| Feature | Free | Pro | Enterprise |
 | :--- | :--- | :--- | :--- |
 | **Storage Limit** | 1MB per stash | 50MB per stash | 500MB per stash |
 | **Default TTL** | 1 Hour | 24 Hours | Customizable |
-| **Persistence** | None (RAM only) | RDB Snapshots | AOF (Append Only) |
-| **Redundancy** | None | Basic | High (Replicated) |
+| **Max TTL** | 1 Hour | 24 Hours | 7 Days |
+| **Rate Limit** | 60/min | 300/min | Unlimited |
+| **Persistence** | None | RDB Snapshots | AOF + Replication |
 
 ---
 
-## 4. API Specification
+## Configuration
 
-### `POST /stash`
-**Purpose:** Save a JSON block.
-* **Header:** `X-API-KEY: <your_key>`
-* **Input Body:**
-    ```json
-    {
-      "data": { "any": "valid_json" },
-      "ttl": 3600
-    }
-    ```
-* **Logic:** 
-    1. Validate JSON size against user tier limit.
-    2. Generate unique 8-char `memory_id`.
-    3. Save to Redis with key `user:{id}:{mem_id}` and `EXPIRE` set to `ttl`.
+Stash uses environment variables for configuration:
 
-### `GET /recall/{memory_id}`
-**Purpose:** Retrieve a stored block.
-* **Logic:** Authenticate user -> Check Redis for `user:{id}:{memory_id}` -> Return 404 if not found or expired.
+```bash
+# Backend selection
+STASH_BACKEND=sqlite          # memory, sqlite, redis
 
-### `PATCH /extend/{memory_id}`
-**Purpose:** Add time to an existing memory.
-* **Input:** `{ "extra_seconds": 1800 }`
+# Redis settings (when using redis backend)
+REDIS_URL=redis://localhost:6379
 
----
+# Server settings
+STASH_HOST=0.0.0.0
+STASH_PORT=8000
 
-## 5. Additional Design Considerations
+# Limits
+STASH_DEFAULT_TTL=3600        # 1 hour
+STASH_MAX_TTL=86400           # 24 hours  
+STASH_MAX_PAYLOAD_BYTES=1048576  # 1MB
 
-### ID Generation & Collision Handling
-The 8-character `memory_id` provides approximately 2.8 trillion possibilities (base62), which is sufficient for ephemeral data. However, the implementation should handle the rare collision case:
-* **Option A:** Check-before-write pattern with retry logic
-* **Option B:** Use UUIDs internally, expose shortened IDs externally
-* **Recommendation:** Implement a simple retry loop (max 3 attempts) when generating IDs, falling back to UUID if collisions persist.
+# Logging
+STASH_LOG_LEVEL=INFO
+STASH_LOG_FORMAT=json         # json or console
 
-### Dual-Layer Size Validation
-Relying solely on `Content-Length` headers is insufficient since clients can provide incorrect values. Implement two validation layers:
-1. **Pre-read gate:** Check `Content-Length` header against tier limit (fast rejection)
-2. **Post-deserialization validation:** Verify actual payload size after JSON parsing before writing to Redis
-
-```python
-# Example middleware pattern
-if content_length > tier_limit:
-    raise HTTPException(413, "Payload Too Large")
-    
-payload = await request.json()
-actual_size = len(json.dumps(payload).encode('utf-8'))
-if actual_size > tier_limit:
-    raise HTTPException(413, "Payload Too Large")
+# Hosted mode
+STASH_API_KEY=sk_live_...     # Enables hosted backend
 ```
 
+Or use a `.env` file in your project root.
+
+---
+
+## Design Considerations
+
+### ID Generation & Collision Handling
+
+The 8-character `memory_id` provides ~2.8 trillion possibilities (base62). The implementation uses retry logic for the rare collision case, falling back to UUID if collisions persist.
+
+### Dual-Layer Size Validation
+
+1. **Pre-read gate:** Check `Content-Length` header (fast rejection)
+2. **Post-parse validation:** Verify actual payload size after JSON parsing
+
 ### Rate Limiting
-AI agents can loop aggressively, making rate limiting essential for cost control and noisy-neighbor prevention. Implement per-API-key rate limits:
+
+Per-API-key rate limits prevent runaway agents from overwhelming the service:
 
 | Tier | Requests/Minute | Burst Limit |
 | :--- | :--- | :--- |
@@ -97,24 +294,10 @@ AI agents can loop aggressively, making rate limiting essential for cost control
 | Pro | 300 | 50 |
 | Enterprise | Customizable | Customizable |
 
-**Implementation options:**
-* Redis-based sliding window counter (recommended for consistency)
-* FastAPI middleware with `slowapi` library
-* Token bucket algorithm for burst handling
+### Structured Logging
 
-### Logging Strategy
-Structured logging is critical for debugging ephemeral systems where data disappears by design. Implement comprehensive logging across all operations.
+All operations emit structured JSON logs for observability:
 
-**Log Levels & Events:**
-
-| Level | Events |
-| :--- | :--- |
-| **INFO** | Stash created, Recall successful, TTL extended, User authenticated |
-| **WARNING** | Rate limit approached (80% threshold), Large payload received, TTL extension on near-expiry key |
-| **ERROR** | Authentication failed, Redis connection error, Rate limit exceeded, Size validation failed |
-| **DEBUG** | Full request/response payloads, Redis command timing, ID generation attempts |
-
-**Structured Log Format (JSON):**
 ```json
 {
   "timestamp": "2024-01-15T10:30:00Z",
@@ -123,141 +306,157 @@ Structured logging is critical for debugging ephemeral systems where data disapp
   "user_id": "usr_abc123",
   "memory_id": "xK9mP2nQ",
   "ttl_seconds": 3600,
-  "payload_bytes": 2048,
-  "tier": "pro",
-  "request_id": "req_xyz789"
+  "payload_bytes": 2048
 }
 ```
 
-**Implementation recommendations:**
-* Use `structlog` or `python-json-logger` for structured JSON output
-* Generate a unique `request_id` per request via middleware for tracing
-* Log Redis operation latency for performance monitoring
-* Mask or omit sensitive payload contents in production logs
-* Configure log rotation and retention policies (7 days recommended for ephemeral service)
-
-**Key metrics to track:**
-* Stash/recall operations per minute (by tier)
-* Average payload size (by tier)
-* TTL distribution histogram
-* Cache hit/miss ratio for recalls
-* P95/P99 Redis latency
-
-### Deployment Modes (Local vs. Remote)
-FlashMemory is designed to run identically in local development and production environments, catering to the growing "local-first" AI movement (Ollama, LM Studio, privacy-conscious tooling).
-
-**Why this matters:**
-* Vibe coders running local LLMs want their entire stack offline
-* "Ephemeral by design" + "local deployment" = strong privacy story
-* Developers start local for experimentation, graduate to hosted for scale
-* Zero friction between environments accelerates adoption
-
-**Configuration-driven deployment:**
-```bash
-# Environment variables control behavior
-FLASHMEMORY_MODE=local|dev|production
-REDIS_URL=redis://localhost:6379  # or remote endpoint
-PERSISTENCE_MODE=none|rdb|aof
-RATE_LIMIT_ENABLED=true|false
-```
-
-**Local Mode (Laptop-friendly):**
-| Setting | Value |
-| :--- | :--- |
-| Default TTL | 15 minutes |
-| Max payload | 512KB |
-| Rate limiting | Disabled |
-| Persistence | None |
-| Memory ceiling | 256MB |
-
-**Embedded Option (Zero-dependency local):**
-For users who don't want to run a separate Redis container, support an embedded alternative:
-* **`fakeredis`**: Pure Python Redis implementation, perfect for testing and lightweight local use
-* **SQLite + TTL logic**: Single-file persistence with background expiry thread
-* Auto-detect: If `REDIS_URL` is unset, fall back to embedded mode
-
-**Docker Compose Profiles:**
-```yaml
-# docker-compose.yml
-services:
-  web:
-    build: .
-    profiles: ["local", "production"]
-    
-  redis:
-    image: redis:alpine
-    profiles: ["local", "production"]
-    
-  redis-persistent:
-    image: redis:alpine
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    profiles: ["production"]
-```
-
-```bash
-# Usage
-docker compose --profile local up      # RAM-only, single container
-docker compose --profile production up # AOF persistence, volumes
-```
-
 ---
 
-## 6. Competitive Landscape
+## Competitive Landscape
 
-### Direct Competitors (AI Agent Memory)
-FlashMemory occupies a specific niche: **ephemeral, short-term agent RAM**. The broader AI memory space includes:
+### Where Stash Fits
 
-| Product | Focus | Persistence | Self-Hostable | Key Differentiator |
-| :--- | :--- | :--- | :--- | :--- |
-| **FlashMemory** | Ephemeral scratchpad | TTL-based eviction | Yes | Trash-first philosophy, zero-config |
-| **Mem0** | Long-term personalization | Permanent | Limited | User preference storage, managed SaaS |
-| **Zep** | Temporal knowledge graphs | Permanent | Yes (Community) | Graph-based relationships, enterprise focus |
-| **Letta (MemGPT)** | Stateful agents | Archival + recall | Yes | Agent Development Environment, open source |
-| **AgentFS** | Agent filesystem | SQLite-backed | Yes | Single-file portability, audit trails |
+Stash occupies a specific niche: **ephemeral working memory**. The broader AI memory space includes:
 
-**Where FlashMemory fits:**
-* Mem0/Zep/Letta solve **long-term memory** (what does the agent remember about this user?)
-* FlashMemory solves **working memory** (where does the agent stash intermediate results during a task?)
-* These are complementary, not competitive—an agent might use Mem0 for user preferences AND FlashMemory for mid-task state
-
-### Infrastructure Alternatives (Key-Value Stores)
-If users want to swap the underlying store:
-
-| Store | Local-Friendly | Redis-Compatible | Notes |
+| Product | Focus | Persistence | Self-Hostable |
 | :--- | :--- | :--- | :--- |
-| **Redis** | Docker required | ✓ | The standard, battle-tested |
-| **Valkey** | Docker required | ✓ | Open-source Redis fork (Linux Foundation) |
-| **Dragonfly** | Docker required | ✓ | 25x throughput, drop-in replacement |
-| **KeyDB** | Docker required | ✓ | Multithreaded Redis alternative |
-| **fakeredis** | Native Python | ✓ | Perfect for testing/embedded use |
+| **Stash** | Ephemeral scratchpad | TTL-based eviction | Yes (local-first) |
+| **Mem0** | Long-term personalization | Permanent | Limited |
+| **Zep** | Temporal knowledge graphs | Permanent | Yes (Community) |
+| **Letta** | Stateful agents | Archival + recall | Yes |
+
+**Key insight:** Mem0/Zep/Letta solve "what does the agent remember about this user?" Stash solves "where do I park intermediate results during a task?" These are complementary—use both.
+
+### Infrastructure Alternatives
+
+If you want to swap the underlying store:
+
+| Store | Local-Friendly | Zero-Config | Notes |
+| :--- | :--- | :--- | :--- |
+| **SQLite** | ✓ | ✓ | Stash default for local |
+| **Redis** | Needs Docker | ✗ | Stash default for production |
+| **Valkey** | Needs Docker | ✗ | Open-source Redis fork |
+| **DuckDB** | ✓ | ✓ | Good for analytics |
 
 ---
 
-## 7. Development & Testing Instructions (For AI Agents)
+## Development
 
-### Implementation Roadmap
-1.  **Auth Layer:** Create a mock user database (dictionary) mapping keys to tiers. Use a FastAPI Dependency to protect all routes.
-2.  **Logging Setup:** Configure `structlog` with JSON formatting and request ID middleware early—this makes debugging all subsequent steps easier.
-3.  **Size Guardrail:** Implement dual-layer validation (header check + post-deserialization) as middleware.
-4.  **Rate Limiter:** Add per-key rate limiting using Redis counters or `slowapi`.
-5.  **Redis Integration:** Use `redis-py`'s `setex` command to handle the key and expiry in a single atomic operation.
-6.  **ID Generation:** Implement collision-safe ID generation with retry logic.
+### Run Locally
+
+```bash
+# Clone and setup
+git clone https://github.com/yourusername/stash.git
+cd stash
+python -m venv venv
+source venv/bin/activate
+pip install -e ".[dev]"
+
+# Run server
+stash serve --reload
+
+# Run tests
+pytest tests/ -v
+```
+
+### Project Structure
+
+```
+stash/
+├── src/
+│   └── stash_memory/
+│       ├── __init__.py
+│       ├── main.py           # FastAPI app
+│       ├── cli.py            # CLI commands
+│       ├── client.py         # Python client
+│       ├── api/              # Route handlers
+│       ├── core/             # Config, auth, middleware
+│       ├── models/           # Pydantic schemas
+│       └── backends/         # Storage implementations
+│           ├── base.py       # Abstract interface
+│           ├── memory.py     # In-memory (testing)
+│           ├── sqlite.py     # SQLite (local)
+│           └── redis.py      # Redis (production)
+├── tests/
+├── docker-compose.yml
+├── Dockerfile
+└── pyproject.toml
+```
 
 ### Test Cases
-* **The Wall Test:** Verify `User_A` cannot GET `User_B`'s data even if they know the `memory_id`.
-* **The Expiry Test:** Stash with `ttl: 2`, wait 3 seconds, verify 404.
-* **The Bloat Test:** Attempt to POST a 5MB JSON on a 1MB limit account. Verify `413 Payload Too Large`.
-* **The Liar Test:** Send a request with `Content-Length: 100` but actual payload of 5MB. Verify rejection.
-* **The Collision Test:** Force ID collisions and verify graceful handling/retry.
-* **The Flood Test:** Send requests exceeding rate limit, verify `429 Too Many Requests`.
-* **The Audit Test:** Verify all operations emit structured logs with correct `request_id`, `user_id`, and `memory_id` fields.
+
+| Test | Purpose |
+| :--- | :--- |
+| **The Wall Test** | User A cannot access User B's data |
+| **The Expiry Test** | Data disappears after TTL |
+| **The Bloat Test** | Oversized payloads rejected (413) |
+| **The Liar Test** | Mismatched Content-Length rejected |
+| **The Flood Test** | Rate limits enforced (429) |
+| **The Update Test** | Data replacement works correctly |
+| **The Extend Test** | TTL extension works correctly |
 
 ---
 
-## 8. Containerization (docker-compose.yml)
-The project must include a `docker-compose.yml` defining:
-* `web`: The FastAPI application.
-* `redis`: The Redis instance (using `redis:alpine`).
-* **Volumes:** Setup a volume for `/data` to support the "Paid Tier" AOF persistence mode.
+## Docker
+
+### Quick Start
+
+```bash
+docker run -p 8000:8000 stashmemory/stash
+```
+
+### Docker Compose (with Redis)
+
+```yaml
+version: "3.8"
+
+services:
+  stash:
+    image: stashmemory/stash
+    ports:
+      - "8000:8000"
+    environment:
+      - STASH_BACKEND=redis
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:alpine
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:
+```
+
+```bash
+docker compose up
+```
+
+---
+
+## Roadmap
+
+- [x] Core API (stash, recall, update)
+- [x] Redis backend
+- [x] API key authentication
+- [x] Tiered limits
+- [ ] SQLite backend with TTL
+- [ ] Python client library
+- [ ] CLI (`stash serve`, `stash get`, `stash set`)
+- [ ] Single binary distribution
+- [ ] Hosted service
+- [ ] Dashboard UI
+
+---
+
+## License
+
+MIT
+
+---
+
+## Contributing
+
+Contributions welcome! Please read our contributing guidelines and submit PRs to the `main` branch.

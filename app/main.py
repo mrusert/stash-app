@@ -3,17 +3,19 @@ Stash - Ephemeral Agent RAM
 Main application entry point
 """
 
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from app.core.config import get_settings
 from app.models.schemas import (
     StashRequest,
     StashResponse,
     RecallResponse,
-    ExtendRequest,
-    ExtendResponse
+    UpdateRequest,
+    UpdateResponse,
 )
+from app.services.redis_service import redis_service
 
 # Create the FastAPI application instance
 # This is the core object that handles all routing and middleware
@@ -21,10 +23,25 @@ from app.models.schemas import (
 # Get settings instance
 settings = get_settings()
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifecycle manager for the FastAPI application.
+
+    Code before 'yield' runs at startup
+    Code after 'yield' runs at shutdown
+    """
+    # startup
+    await redis_service.connect()
+    yield # Application runs here
+    # shutdown
+    await redis_service.disconnect()
+
 app = FastAPI(
     title="Stash",
-    description="Ephemeral key-value store for AI agents",
-    version="0.1.0"
+    description="Working memory for AI developers and agents",
+    version="0.1.0",
+     lifespan=lifespan,
 )
 
 # Temporary in-memory storage (we'll replace with Redis later)
@@ -57,15 +74,20 @@ async def stash(request: StashRequest):
     # Generate a simple ID (we'll improve this later)
     memory_id = secrets.token_urlsafe(6) # ~8 characters
 
-    # Generate a simple ID (we'll improve this later)
-    expires_at = datetime.now(timezone.utc)
+    # TODO: Get user_id from authentication (Module 5)
+    # For now, user is a placeholder
+    user_id = "anonymous"
 
-    # Store temporarily (replace with Redis later)
-    _temp_storage[memory_id] = {
-        "data": request.data,
-        "ttl": request.ttl,
-        "expires_at": expires_at,
-    }
+    # Store in Redis
+    await redis_service.stash(
+        user_id=user_id,
+        memory_id=memory_id,
+        data=request.data,
+        ttl_seconds=request.ttl
+    )
+
+    # Calculate expiration time
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=request.ttl) 
 
     return StashResponse(
         memory_id=memory_id,
@@ -79,51 +101,65 @@ async def recall(memory_id: str):
     Retrieve a stored memory by ID.
     Returns 404 if the memory doesn't exist or has expired.
     """
-    if memory_id not in _temp_storage:
+    # TODO: From auth
+    user_id = "anonymous"
+
+    result = await redis_service.recall(user_id, memory_id)
+
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail=f"Memory '{memory_id}' not found or expired."
         )
-    
-    stored = _temp_storage[memory_id]
 
     return RecallResponse(
         memory_id=memory_id,
-        data=stored["data"],
-        ttl_remaining=stored["ttl"] # simplified for now
+        data=result["data"],
+        ttl_remaining=result["ttl_remaining"]
     )
 
-@app.patch("/extend/{memory_id}", response_model=ExtendResponse)
-async def extend(memory_id: str, request: ExtendRequest):
+@app.patch("/update/{memory_id}", response_model=UpdateResponse)
+async def update(memory_id: str, request: UpdateRequest):
     """
-    Extend the TTL of an existing memory
+    Update stored data, extend TTL, or both.
     """
+    # TODO: From auth
+    user_id = "anonymous"
 
-    if memory_id not in _temp_storage:
+    result = await redis_service.update(
+        user_id=user_id,
+        memory_id=memory_id,
+        data=request.data,
+        extra_time=request.extra_time,
+    )
+
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail=f"Memory '{memory_id}' not found or expired"
         )
     
-    stored = _temp_storage[memory_id]
-    new_ttl = stored['ttl'] + request.extra_seconds
-    stored['ttl'] = new_ttl
+    expires_at = datetime.now(timezone.utc) + + timedelta(seconds=result["ttl_remaining"])
 
-    return ExtendResponse(
+    return UpdateResponse(
         memory_id=memory_id,
-        new_ttl=new_ttl,
-        expires_at=datetime.now(),
+        data=result["data"],
+        ttl_remaining=result["ttl_remaining"],
+        expires_at= expires_at,
     )
 
 
 @app.get("/health")
 async def health_check():
-    """
-    Detailed health check.
-    In production, this would check Redis connectivity
-    """
+    try:
+        pong = await redis_service.client.ping()
+        redis_status = "connected" if pong else "unreachable"
+    except Exception:
+        redis_status = "unreachable"
+
     return {
         "status": "healthy",
         "version": "0.1.0",
-        "mode": "local"
+        "redis": redis_status,
+        "mode": settings.stash_mode,
     }
