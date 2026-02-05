@@ -18,6 +18,7 @@ from app.models.schemas import (
 )
 from app.services.redis_service import redis_service
 from app.services.user_db import user_db
+from app.core.middleware import PayloadSizeMiddleware
 
 # Create the FastAPI application instance
 # This is the core object that handles all routing and middleware
@@ -53,6 +54,9 @@ app = FastAPI(
     version="0.1.0",
      lifespan=lifespan,
 )
+
+# Middleware
+app.add_middleware(PayloadSizeMiddleware)
 
 # Define a route using a "@decorator"
 # The @app.get("/") decorator tells FastAPI:

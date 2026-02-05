@@ -82,21 +82,12 @@ class UpdateRequest(BaseModel):
         "json_schema_extra": {
             "examples": [
                 {
-                    "summary": "Replace data only",
-                    "value": {
-                        "data": {"task": "summarize this document", "progress": 0.75, "result": "partial output"}
-                    }
-                },
-                {
-                    "summary": "Extend TTL only",
-                    "value": {"extra_time": 1800}
-                },
-                {
-                    "summary": "Replace data and extend TTL",
-                    "value": {
-                        "data": {"task": "summarize", "progress": 1.0, "status": "complete"},
-                        "extra_time": 3600
-                    }
+                    "data": {
+                        "task": "summarize_document",
+                        "partial_result": "The document discusses...",
+                        "step": 2
+                    },
+                    "extra_time": 3600
                 }
             ]
         }
