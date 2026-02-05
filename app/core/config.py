@@ -48,6 +48,12 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    class Settings(BaseSettings):
+    # ... existing fields ...
+    
+        # User database (SQLite for local, PostgreSQL URL for production)
+        users_db_path: str = "users.db"
+
 # Cache the settings instance so we don't re-read .env on every request
 @lru_cache
 def get_settings() -> Settings:

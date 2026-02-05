@@ -4,10 +4,11 @@ Main application entry point
 """
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 import secrets
 from datetime import datetime, timezone, timedelta
 from app.core.config import get_settings
+from app.core.auth import get_current_user, User
 from app.models.schemas import (
     StashRequest,
     StashResponse,
@@ -16,6 +17,7 @@ from app.models.schemas import (
     UpdateResponse,
 )
 from app.services.redis_service import redis_service
+from app.services.user_db import user_db
 
 # Create the FastAPI application instance
 # This is the core object that handles all routing and middleware
@@ -32,9 +34,17 @@ async def lifespan(app: FastAPI):
     Code after 'yield' runs at shutdown
     """
     # startup
+    await user_db.connect()
     await redis_service.connect()
+
+    if settings.stash_mode == "local":
+        print("\n📦 Seeding demo users...")
+        await user_db.seed_demo_users()
+        print("   (Save these keys - they won't be shown again!)\n")
+
     yield # Application runs here
     # shutdown
+    await user_db.disconnect()
     await redis_service.disconnect()
 
 app = FastAPI(
@@ -43,10 +53,6 @@ app = FastAPI(
     version="0.1.0",
      lifespan=lifespan,
 )
-
-# Temporary in-memory storage (we'll replace with Redis later)
-# This is just for testing our endpoints work
-_temp_storage: dict = {}
 
 # Define a route using a "@decorator"
 # The @app.get("/") decorator tells FastAPI:
@@ -65,22 +71,21 @@ async def root():
     }
 
 @app.post("/stash", response_model=StashResponse)
-async def stash(request: StashRequest):
+async def stash(request: StashRequest, user: User = Depends(get_current_user)):
     """
     Store a JSON block with automatic expiration.
-
     The data will be deleted after the TTL expires.
+    Requires Auth -> user: User = Depends(get_current_user)
     """
     # Generate a simple ID (we'll improve this later)
     memory_id = secrets.token_urlsafe(6) # ~8 characters
 
-    # TODO: Get user_id from authentication (Module 5)
-    # For now, user is a placeholder
-    user_id = "anonymous"
+    # Enfore tier-based TTL limits
+    ttl = min(request.ttl, user.max_ttl_seconds)
 
     # Store in Redis
     await redis_service.stash(
-        user_id=user_id,
+        user_id=user.id,
         memory_id=memory_id,
         data=request.data,
         ttl_seconds=request.ttl
@@ -96,15 +101,13 @@ async def stash(request: StashRequest):
     )
 
 @app.get("/recall/{memory_id}", response_model=RecallResponse)
-async def recall(memory_id: str):
+async def recall(memory_id: str, user: User = Depends(get_current_user)):
     """
     Retrieve a stored memory by ID.
     Returns 404 if the memory doesn't exist or has expired.
+    Requires Auth -> user: User = Depends(get_current_user)
     """
-    # TODO: From auth
-    user_id = "anonymous"
-
-    result = await redis_service.recall(user_id, memory_id)
+    result = await redis_service.recall(user.id, memory_id)
 
     if result is None:
         raise HTTPException(
@@ -119,15 +122,14 @@ async def recall(memory_id: str):
     )
 
 @app.patch("/update/{memory_id}", response_model=UpdateResponse)
-async def update(memory_id: str, request: UpdateRequest):
+async def update(memory_id: str, request: UpdateRequest, user: User = Depends(get_current_user)):
     """
     Update stored data, extend TTL, or both.
+    Requires Auth -> user: User = Depends(get_current_user)
     """
-    # TODO: From auth
-    user_id = "anonymous"
 
     result = await redis_service.update(
-        user_id=user_id,
+        user_id=user.id,
         memory_id=memory_id,
         data=request.data,
         extra_time=request.extra_time,
@@ -139,6 +141,15 @@ async def update(memory_id: str, request: UpdateRequest):
             detail=f"Memory '{memory_id}' not found or expired"
         )
     
+    # Enfore tier limits on extended TTL
+    new_ttl = result["ttl_remaining"]
+    if new_ttl > user.max_ttl_seconds:
+        new_ttl = user.max_ttl_seconds
+        await redis_service._client.expire(
+            redis_service._make_key(user.id, memory_id),
+            new_ttl
+        )
+
     expires_at = datetime.now(timezone.utc) + + timedelta(seconds=result["ttl_remaining"])
 
     return UpdateResponse(
