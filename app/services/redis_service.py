@@ -11,8 +11,10 @@ from redis.asyncio import Redis
 from typing import Any, Optional
 from datetime import datetime, timezone
 import fakeredis.aioredis
-
+from app.core.logging import get_logger
 from app.core.config import get_settings
+
+logger = get_logger(__name__)
 
 class RedisService:
     """
@@ -94,6 +96,16 @@ class RedisService:
 
         # SETEX: SET with Expiry - atomic operation
         await self._client.setex(key, ttl_seconds, value)
+
+        # Log the operation
+        logger.info(
+            "stash_created",
+            user_id=user_id,
+            memory_id=memory_id,
+            ttl_seconds=ttl_seconds,
+            payload_bytes=len(value),
+        )
+
         return True
     
     async def recall(self, user_id: str, memory_id: str) -> Optional[dict]:
@@ -123,6 +135,15 @@ class RedisService:
         
         # Parse JSON
         parsed = json.loads(value)
+
+        # Log the operation
+        logger.info(
+            "stash_recalled",
+            user_id=user_id,
+            memory_id=memory_id,
+            ttl_seconds=ttl,
+            payload_bytes=len(value),
+        )
 
         return {
             "data": parsed["data"],
@@ -174,6 +195,15 @@ class RedisService:
         # Save with new TTL
         await self._client.setex(key, new_ttl, new_value)
 
+        # Log the operation
+        logger.info(
+            "stash_updated",
+            user_id=user_id,
+            memory_id=memory_id,
+            ttl_seconds=new_ttl,
+            payload_bytes=len(new_value),
+        )
+
         return {
             "data": parsed["data"],
             "ttl_remaining": new_ttl
@@ -183,6 +213,12 @@ class RedisService:
         """Delete a memory immediately."""
         key = self._make_key(user_id, memory_id)
         result = await self._client.delete(key)
+        # Log the operation
+        logger.info(
+            "stash_deleted",
+            user_id=user_id,
+            memory_id=memory_id
+        )
         return result > 0
 
 # Singleton instance

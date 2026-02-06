@@ -9,6 +9,7 @@ import secrets
 from datetime import datetime, timezone, timedelta
 from app.core.config import get_settings
 from app.core.auth import get_current_user, User
+from app.core.logging import setup_logging, get_logger
 from app.models.schemas import (
     StashRequest,
     StashResponse,
@@ -19,6 +20,8 @@ from app.models.schemas import (
 from app.services.redis_service import redis_service
 from app.services.user_db import user_db
 from app.core.middleware import PayloadSizeMiddleware
+
+logger = get_logger(__name__)
 
 # Create the FastAPI application instance
 # This is the core object that handles all routing and middleware
@@ -35,8 +38,11 @@ async def lifespan(app: FastAPI):
     Code after 'yield' runs at shutdown
     """
     # startup
+    setup_logging()
+    logger.info("application starting", mode=settings.stash_mode)
     await user_db.connect()
     await redis_service.connect()
+    logger.info("redis_connected")
 
     if settings.stash_mode == "local":
         print("\n📦 Seeding demo users...")
@@ -45,6 +51,7 @@ async def lifespan(app: FastAPI):
 
     yield # Application runs here
     # shutdown
+    logger.info("application_stopping")
     await user_db.disconnect()
     await redis_service.disconnect()
 

@@ -10,10 +10,10 @@ import hashlib
 import secrets
 from typing import Optional
 from pathlib import Path
-
 from app.core.config import get_settings
+from app.core.logging import get_logger
 
-# TODO: Add structured logging in Module 7, use print statements for now
+logger = get_logger(__name__)
 
 class UserDB:
     """
@@ -26,7 +26,7 @@ class UserDB:
 
     def __init__(self):
         self._settings = get_settings()
-        self._db_path = getattr(self._settings, 'users_b_path', "users.db")
+        self._db_path = getattr(self._settings, 'users_db_path', "users.db")
         self._db: Optional[aiosqlite.Connection] = None
     
     @staticmethod
@@ -76,7 +76,7 @@ class UserDB:
         """)
 
         await self._db.commit()
-        print(f"✓ Connected to user database: {self._db_path}")
+        logger.info("user_db_connected", path=self._db_path)
     
     async def disconnect(self) -> None:
         """
@@ -85,7 +85,7 @@ class UserDB:
 
         if self._db:
             await self._db.close()
-            print("✓ Disconnected from user database")
+            logger.info("user_db_disconnected")
         
     async def get_user_by_api_key(self, api_key: str) -> Optional[dict]:
         """
@@ -105,6 +105,7 @@ class UserDB:
             row = await cursor.fetchone()
         
         if row is None:
+            logger.info("api_key_invalid", key_prefix=api_key[:6])
             return None
         
         # Update last_used_at
@@ -113,6 +114,7 @@ class UserDB:
             WHERE key_hash = ?
         """, (key_hash,))
         await self._db.commit()
+        logger.info("api_key_used", user_id=row["id"])
         
         return {
             "id": row["id"],
@@ -130,6 +132,7 @@ class UserDB:
                 (user_id, tier)
             )
             await self._db.commit()
+            logger.info("user_created", user_id=user_id, tier=tier)
             return True
         except aiosqlite.IntegrityError:
             return False # user already exists
@@ -157,6 +160,7 @@ class UserDB:
             "INSERT INTO api_keys (key_hash, user_id, name) VALUES (?,?,?)", (key_hash, user_id, name)
         )
         await self._db.commit()
+        logger.info("api_key_created", user_id=user_id)
 
         # Return plaintext key - user must save this!
         return api_key
