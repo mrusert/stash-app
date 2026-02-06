@@ -132,6 +132,7 @@ class UpdateResponse(BaseModel):
     """
 
     memory_id: str = Field(..., description="The memory_id")
+    data: Any = Field(..., description="The stored data")
     ttl_remaining: int = Field(..., description="Seconds until expiration")
     expires_at: datetime = Field(..., description="Expiration timestamp")
 

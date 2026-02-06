@@ -99,7 +99,7 @@ async def stash(request: StashRequest, user: User = Depends(get_current_user)):
         user_id=user.id,
         memory_id=memory_id,
         data=request.data,
-        ttl_seconds=request.ttl
+        ttl_seconds=ttl
     )
 
     # Calculate expiration time
@@ -107,7 +107,7 @@ async def stash(request: StashRequest, user: User = Depends(get_current_user)):
 
     return StashResponse(
         memory_id=memory_id,
-        ttl = request.ttl,
+        ttl = ttl,
         expires_at=expires_at,
     )
 
@@ -161,12 +161,12 @@ async def update(memory_id: str, request: UpdateRequest, user: User = Depends(ge
             new_ttl
         )
 
-    expires_at = datetime.now(timezone.utc) + + timedelta(seconds=result["ttl_remaining"])
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=result["ttl_remaining"])
 
     return UpdateResponse(
         memory_id=memory_id,
         data=result["data"],
-        ttl_remaining=result["ttl_remaining"],
+        ttl_remaining=new_ttl,
         expires_at= expires_at,
     )
 

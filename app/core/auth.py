@@ -60,7 +60,7 @@ class User(BaseModel):
 
 # Define where to look for the API Key
 api_key_header = APIKeyHeader(
-    name="X-API_KEY",
+    name="X-API-KEY",
     auto_error=False, # We'll handle missing keys ourselves
 )
 
