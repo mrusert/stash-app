@@ -1,0 +1,28 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - STASH_MODE=local
+      - LOG_FORMAT=json
+      - USERS_DB_PATH=/data/users.db
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - stash-data:/data  # Named volume (Docker manages permissions)
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  stash-data:  # Docker-managed volume

@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.git/
+.gitignore
+*.md
+tests/
+.pytest_cache/
+.coverage
+*.db
+helper.md
+COURSE.md

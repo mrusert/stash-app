@@ -41,18 +41,15 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json" # json or console
 
+    # User database (SQLite for local, PostgreSQL URL for production)
+    users_db_path: str = "users.db"
+
     # Tell Pydantic where to find the .env file
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
     )
-
-    class Settings(BaseSettings):
-    # ... existing fields ...
-    
-        # User database (SQLite for local, PostgreSQL URL for production)
-        users_db_path: str = "users.db"
 
 # Cache the settings instance so we don't re-read .env on every request
 @lru_cache
