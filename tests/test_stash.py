@@ -100,3 +100,62 @@ async def test_recall_nonexistent_memory(client: AsyncClient, free_user_headers)
     )
     
     assert response.status_code == 404
+
+@pytest.mark.anyio
+async def test_update_data(client, free_user_headers):
+    """Test updating stash data."""
+    # Create a stash first
+    response = await client.post(
+        "/stash",
+        json={"data": {"version": 1}, "ttl": 300},
+        headers=free_user_headers,
+    )
+    memory_id = response.json()["memory_id"]
+    
+    # Update the data
+    response = await client.patch(
+        f"/update/{memory_id}",
+        json={"data": {"version": 2}},
+        headers=free_user_headers,
+    )
+    
+    assert response.status_code == 200
+    
+    # Verify the update
+    response = await client.get(f"/recall/{memory_id}", headers=free_user_headers)
+    assert response.json()["data"]["version"] == 2
+
+
+@pytest.mark.anyio
+async def test_update_extend_ttl(client, free_user_headers):
+    """Test extending TTL."""
+    # Create a stash
+    response = await client.post(
+        "/stash",
+        json={"data": {"test": "data"}, "ttl": 60},
+        headers=free_user_headers,
+    )
+    memory_id = response.json()["memory_id"]
+    original_ttl = response.json()["ttl"]
+    
+    # Extend TTL
+    response = await client.patch(
+        f"/update/{memory_id}",
+        json={"extra_time": 120},
+        headers=free_user_headers,
+    )
+    
+    assert response.status_code == 200
+    assert response.json()["ttl_remaining"] > original_ttl
+
+
+@pytest.mark.anyio
+async def test_update_nonexistent(client, free_user_headers):
+    """Test updating non-existent memory."""
+    response = await client.patch(
+        "/update/nonexistent123",
+        json={"data": {"test": "data"}},
+        headers=free_user_headers,
+    )
+    
+    assert response.status_code == 404
