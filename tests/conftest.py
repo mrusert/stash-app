@@ -6,12 +6,13 @@ Fixtures are reusable test setup/teardown functions.
 
 import pytest
 from httpx import AsyncClient, ASGITransport
-from unittest.mock import patch
 
 # Import the FastAPI app
 from app.main import app
 from app.services.redis_service import redis_service
 from app.services.user_db import user_db
+
+import fakeredis.aioredis
 
 @pytest.fixture
 def anyio_backend():
@@ -27,15 +28,13 @@ async def client():
     """
 
     # Use fakeredis for stash data
-    import fakeredis.aioredis
     redis_service._client = fakeredis.aioredis.FakeRedis(
         encoding="utf-8",
         decode_responses=True,
     )
 
     # Use in-memory SQLite for user auth
-    import aiosqlite
-    user_db._db_path = ":memory"
+    user_db._db_path = ":memory:"
     await user_db.connect()
 
     # Create test users

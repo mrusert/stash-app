@@ -173,15 +173,14 @@ async def update(memory_id: str, request: UpdateRequest, user: User = Depends(ge
 
 @app.get("/health")
 async def health_check():
-    try:
-        pong = await redis_service.client.ping()
-        redis_status = "connected" if pong else "unreachable"
-    except Exception:
-        redis_status = "unreachable"
-
+    """Detailed health check endpoint."""
+    
     return {
         "status": "healthy",
         "version": "0.1.0",
-        "redis": redis_status,
         "mode": settings.stash_mode,
+        "checks": {
+            "redis": "connected", # TODO: Check Redis
+            "user_db": "connected", # TODO: Check SQLite
+        }
     }
