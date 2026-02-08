@@ -192,13 +192,26 @@ async def delete_stash(
 @app.get("/health")
 async def health_check():
     """Detailed health check endpoint."""
+
+    try:
+        await redis_service._client.ping()
+        redis_status = "connected"
+    except Exception:
+        redis_status = "disconnected"
+    
+    try:
+        async with user_db._db.execute("SELECT 1") as cursor:
+            await cursor.fetchone()
+        db_status = "connected"
+    except Exception:
+        db_status = "disconnected"
     
     return {
         "status": "healthy",
         "version": "0.1.0",
         "mode": settings.stash_mode,
         "checks": {
-            "redis": "connected", # TODO: Check Redis
-            "user_db": "connected", # TODO: Check SQLite
+            "redis": redis_status,
+            "user_db": db_status,
         }
     }
