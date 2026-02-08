@@ -159,3 +159,22 @@ async def test_update_nonexistent(client, free_user_headers):
     )
     
     assert response.status_code == 404
+    
+@pytest.mark.anyio
+async def test_delete_stash(client, free_user_headers):
+    """Test deleting a stash."""
+    # Create a stash
+    response = await client.post(
+        "/stash",
+        json={"data": {"test": "data"}, "ttl": 300},
+        headers=free_user_headers,
+    )
+    memory_id = response.json()["memory_id"]
+    
+    # Delete it
+    response = await client.delete(f"/stash/{memory_id}", headers=free_user_headers)
+    assert response.status_code == 204
+    
+    # Verify it's gone
+    response = await client.get(f"/recall/{memory_id}", headers=free_user_headers)
+    assert response.status_code == 404

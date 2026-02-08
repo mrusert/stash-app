@@ -170,6 +170,21 @@ async def update(memory_id: str, request: UpdateRequest, user: User = Depends(ge
         expires_at= expires_at,
     )
 
+@app.delete("/stash/{memory_id}", status_code=204)
+async def delete_stash(
+    memory_id: str,
+    user: User = Depends(get_current_user),
+):
+    """Delete a stash immediately."""
+    deleted = await redis_service.delete(user.id, memory_id)
+    
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Memory '{memory_id}' not found or expired"
+        )
+    
+    return None  # 204 No Content
 
 @app.get("/health")
 async def health_check():
