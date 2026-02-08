@@ -6,6 +6,14 @@ import pytest
 from httpx import AsyncClient
 
 @pytest.mark.anyio
+async def test_root(client):
+    """Test root endpoint returns status."""
+    response = await client.get("/")
+    
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    
+@pytest.mark.anyio
 async def test_stash_requires_auth(client: AsyncClient):
     """Verify that stash endpoint requires API key."""
     response = await client.post(
