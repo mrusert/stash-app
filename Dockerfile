@@ -11,10 +11,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app/ ./app/
 
-# Create non-root user and data directory
-RUN useradd --create-home appuser && \
-    mkdir -p /data && \
-    chown appuser:appuser /data
+# Create data directory for SQLite (writable by any user)
+RUN mkdir -p /app/data && chmod 777 /app/data
+
+# Create non-root user
+RUN useradd --create-home appuser
 
 USER appuser
 
