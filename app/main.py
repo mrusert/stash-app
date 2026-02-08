@@ -44,9 +44,12 @@ async def lifespan(app: FastAPI):
     await redis_service.connect()
     logger.info("redis_connected")
 
-    if settings.stash_mode == "local":
+    # Seed demo users if none exist
+    demo_keys = await user_db.seed_demo_users()
+    if demo_keys:
         print("\n📦 Seeding demo users...")
-        await user_db.seed_demo_users()
+        for tier, key in demo_keys.items():
+            print(f"  {tier.upper()}: {key}")
         print("   (Save these keys - they won't be shown again!)\n")
 
     yield # Application runs here
