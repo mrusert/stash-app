@@ -14,6 +14,9 @@ COPY app/ ./app/
 # Create data directory for SQLite (writable by any user)
 RUN mkdir -p /app/data && chmod 777 /app/data
 
+# Point SQLite database to the writable data directory
+ENV USERS_DB_PATH=/app/data/users.db
+
 # Create non-root user
 RUN useradd --create-home appuser
 
