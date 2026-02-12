@@ -201,8 +201,8 @@ async def health_check():
         redis_status = "disconnected"
     
     try:
-        async with user_db._db.execute("SELECT 1") as cursor:
-            await cursor.fetchone()
+        async with user_db._pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
         db_status = "connected"
     except Exception:
         db_status = "disconnected"

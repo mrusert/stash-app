@@ -158,6 +158,29 @@ async def test_update_extend_ttl(client, free_user_headers):
 
 
 @pytest.mark.anyio
+async def test_update_extend_ttl_capped_by_tier(client, free_user_headers):
+    """Verify that extending TTL beyond free tier limit gets capped at 3600."""
+    # Create a stash with max free TTL
+    response = await client.post(
+        "/stash",
+        json={"data": {"test": "data"}, "ttl": 3600},
+        headers=free_user_headers,
+    )
+    memory_id = response.json()["memory_id"]
+
+    # Try to extend TTL far beyond free tier limit
+    response = await client.patch(
+        f"/update/{memory_id}",
+        json={"extra_time": 7200},
+        headers=free_user_headers,
+    )
+
+    assert response.status_code == 200
+    # Free tier max is 3600, so TTL should be capped
+    assert response.json()["ttl_remaining"] <= 3600
+
+
+@pytest.mark.anyio
 async def test_update_nonexistent(client, free_user_headers):
     """Test updating non-existent memory."""
     response = await client.patch(
