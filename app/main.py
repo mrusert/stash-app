@@ -44,14 +44,15 @@ async def lifespan(app: FastAPI):
     await redis_service.connect()
     logger.info("redis_connected")
 
-    # Seed demo users if none exist
-    demo_keys = await user_db.seed_demo_users()
-    if demo_keys:
-        print("\n📦 Seeding demo users...")
-        for tier, key in demo_keys.items():
-            print(f"  {tier.upper()}: {key}")
-        print("   (Save these keys - they won't be shown again!)\n")
-
+    # Seed demo users in local mode
+    if settings.stash_mode == "local":
+        demo_keys = await user_db.seed_demo_users()
+        if demo_keys:
+            print("\n📦 Created demo users:")
+            for tier, key in demo_keys.items():
+                print(f"  {tier.upper()}: {key}")
+            print("   (Save these keys - they won't be shown again!)\n")
+    
     yield # Application runs here
     # shutdown
     logger.info("application_stopping")
@@ -61,7 +62,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Stash",
     description="Working memory for AI developers and agents",
-    version="0.1.0",
+    version="0.2.0",
      lifespan=lifespan,
 )
 

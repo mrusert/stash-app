@@ -5,7 +5,7 @@ Uses API key authentication with tiered access levels.
 User data is stored in SQLite (local) and PostreSQL (production).
 """
 
-from fastapi import HTTPException, Security, Depends
+from fastapi import HTTPException, Security, Request, Depends
 from fastapi.security import APIKeyHeader
 from typing import Optional
 from pydantic import BaseModel
@@ -39,22 +39,30 @@ class User(BaseModel):
         return limits[self.tier]
     
     @property
-    def default_ttl_seconds(self) -> int:
-       """Default TTL for this tier."""
-       defaults = {
-          UserTier.FREE: 3600,       # 1 hour
-            UserTier.PRO: 86400,       # 24 hours
-            UserTier.ENTERPRISE: 86400, # 24 hours (customizable)
-       }
-       return defaults[self.tier]
-    
-    @property
     def max_ttl_seconds(self) -> int:
         """Maximum allowed TTL for this tier."""
         limits = {
             UserTier.FREE: 3600,        # 1 hour max
             UserTier.PRO: 86400,        # 24 hours max
             UserTier.ENTERPRISE: 604800, # 7 days max
+        }
+        return limits[self.tier]
+    
+    @property
+    def max_stashes(self) -> int:
+        limits = {
+            UserTier.FREE: 100,
+            UserTier.PRO: 1000,
+            UserTier.ENTERPRISE: 10000,
+        }
+        return limits[self.tier]
+    
+    @property
+    def rate_limit_per_minute(self) -> int:
+        limits = {
+            UserTier.FREE: 60,
+            UserTier.PRO: 300,
+            UserTier.ENTERPRISE: 1000,
         }
         return limits[self.tier]
 
@@ -67,13 +75,6 @@ api_key_header = APIKeyHeader(
 async def get_current_user(api_key: Optional[str] = Security(api_key_header),) -> User:
     """
     Dependency that extracts and validates the API key.
-    
-    Looks up the API key in the SQLite db.
-
-    Usage in route:
-        @app.post("/stash")
-            async def stash(user: User = Depends(get_current_user)):
-                ...
     """
 
     if api_key is None:
@@ -97,14 +98,3 @@ async def get_current_user(api_key: Optional[str] = Security(api_key_header),) -
         id=user_data["id"],
         tier=UserTier(user_data["tier"]),
     )
-
-async def require_pro_tier(user: User = Depends(get_current_user),) -> User:
-    """
-    Dependency that requires Pro tier or higher.
-    """
-    if user.tier == UserTier.FREE:
-        raise HTTPException(
-            status_code=403,
-            detail="This feature requires Pro tier or higher",
-        )
-    return user

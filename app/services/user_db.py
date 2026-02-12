@@ -1,15 +1,14 @@
 """
-User database service using SQLite.
+User database service using PostgreSQL
 
-Handles persistent storage of users and API keys.
-For production, this would be replaced with PostgreSQL.
+Production-ready persistent storage for user and API keys
 """
 
-import aiosqlite
+import asyncpg
 import hashlib
 import secrets
 from typing import Optional
-from pathlib import Path
+
 from app.core.config import get_settings
 from app.core.logging import get_logger
 
@@ -17,161 +16,154 @@ logger = get_logger(__name__)
 
 class UserDB:
     """
-    SQLite-based user and API key storage.
+    PostgreSQL-based user and API key storage
 
     Tables:
-    - users: id, tier, created_at
-    - api_key: key_hash, user_id, created_at, last_used_at
+    - users: id, tier, created_At
+    - api_keys: id, key_hash, user_id, name, created_at, last_used_at
     """
 
     def __init__(self):
         self._settings = get_settings()
-        self._db_path = getattr(self._settings, 'users_db_path', "users.db")
-        self._db: Optional[aiosqlite.Connection] = None
+        self._pool: Optional[asyncpg.Pool] = None
     
     @staticmethod
     def hash_key(api_key: str) -> str:
-        """
-        Hash an API key for secure storage.
-
-        We use SHA-256 - fast enough for lookups, secure enough for API keys.
-        In production, you might use bcrypt for user passwords, but for 
-        API keys that are already high-entropy, SHA-256 is fine.
-        """
-
+        """Hash an API key for secure storage"""
         return hashlib.sha256(api_key.encode()).hexdigest()
-
+    
     async def connect(self) -> None:
-        """
-        Initialize the database and create tables.
-        """
-        self._db = await aiosqlite.connect(self._db_path)
-        self._db.row_factory = aiosqlite.Row
+        """Initialize the database connection pool and create tables"""
+        self._pool = await asyncpg.create_pool(
+            self._settings.database_url,
+            min_size=2,
+            max_size=10,
+        )
 
-        # Create users table
-        await self._db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                tier TEXT NOT NULL DEFAULT 'free',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Create api_keys table
-        await self._db.execute("""
-            CREATE TABLE IF NOT EXISTS api_keys (
-                key_hash TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                name TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                last_used_at TEXT,
-                FOREIGN KEY (user_id) REFERENCES users(id)
-            )
-        """)
+        async with self._pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    tier TEXT NOT NULL DEFAULT 'free',
+                    api_key_hash TEXT UNIQUE NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    key_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_users_api_key_hash 
+                ON users(api_key_hash)
+            """)
         
-        # Create index for faster lookups
-        await self._db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_api_keys_user 
-            ON api_keys(user_id)
-        """)
-
-        await self._db.commit()
-        logger.info("user_db_connected", path=self._db_path)
+        logger.info("user_db_connected", database="postgresql")
     
     async def disconnect(self) -> None:
-        """
-        Close the db connection.
-        """
-
-        if self._db:
-            await self._db.close()
+        """Close the database connection pool."""
+        if self._pool:
+            await self._pool.close()
             logger.info("user_db_disconnected")
-        
+    
     async def get_user_by_api_key(self, api_key: str) -> Optional[dict]:
         """
-        Look up user by their API key.
-
+        Look up a user by their API key.
+        
         Returns dict with user info, or None if key is invalid.
         """
-
         key_hash = self.hash_key(api_key)
-
-        async with self._db.execute("""
-            SELECT u.id, u.tier, ak.name as key_name
-            FROM api_keys ak
-            JOIN users u ON ak.user_id = u.id
-            WHERE ak.key_hash = ?
-        """, (key_hash,)) as cursor:
-            row = await cursor.fetchone()
         
-        if row is None:
-            logger.info("api_key_invalid", key_prefix=api_key[:6])
-            return None
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT id, tier, created_at
+                FROM users
+                WHERE api_key_hash = $1
+            """, key_hash)
+            
+            if row is None:
+                logger.info("api_key_invalid", key_prefix=api_key[:10])
+                return None
         
-        # Update last_used_at
-        await self._db.execute("""
-            UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP
-            WHERE key_hash = ?
-        """, (key_hash,))
-        await self._db.commit()
         logger.info("api_key_used", user_id=row["id"])
         
         return {
             "id": row["id"],
             "tier": row["tier"],
-            "key_name": row["key_name"],
+            "created_at": row["created_at"].isoformat(),
         }
     
-    async def create_user(self, user_id: str, tier: str = "free") -> bool:
+    async def create_user(self, user_id: str, tier: str = "free") -> Optional[str]:
         """
-        Create a new user.
+        Create a new user with an API key.
+        
+        Returns the plaintext API key, or None if user already exists.
         """
-        try:
-            await self._db.execute(
-                "INSERT INTO users (id, tier) VALUES (?,?)",
-                (user_id, tier)
-            )
-            await self._db.commit()
-            logger.info("user_created", user_id=user_id, tier=tier)
-            return True
-        except aiosqlite.IntegrityError:
-            return False # user already exists
-    
-    async def create_api_key(self, user_id: str, name: Optional[str] = None) -> Optional[str]:
-        """
-        Create a new API key for a user.
-
-        Returns the plaintext key (only time it's available) or None if user doesn't exist.
-        """
-
-        # Verify user exists
-        async with self._db.execute(
-            "SELECT id FROM users WHERE id = ?", (user_id,)
-        ) as cursor:
-            if await cursor.fetchone() is None:
-                return None
-
-        # Generate a secure API key
-        # Format: sk_{random} for readability
         api_key = f"sk_{secrets.token_urlsafe(24)}"
         key_hash = self.hash_key(api_key)
+        
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO users (id, tier, api_key_hash)
+                    VALUES ($1, $2, $3)
+                """, user_id, tier, key_hash)
+            
+            logger.info("user_created", user_id=user_id, tier=tier)
+            return api_key
+            
+        except asyncpg.UniqueViolationError:
+            logger.info("user_exists", user_id=user_id)
+            return None
+    
 
-        await self._db.execute(
-            "INSERT INTO api_keys (key_hash, user_id, name) VALUES (?,?,?)", (key_hash, user_id, name)
-        )
-        await self._db.commit()
-        logger.info("api_key_created", user_id=user_id)
-
-        # Return plaintext key - user must save this!
+    async def get_user(self, user_id: str) -> Optional[dict]:
+        """Get user by ID."""
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT id, tier, created_at, key_created_at
+                FROM users
+                WHERE id = $1
+            """, user_id)
+        
+        if row is None:
+            return None
+        
+        return {
+            "id": row["id"],
+            "tier": row["tier"],
+            "created_at": row["created_at"].isoformat(),
+            "key_created_at": row["key_created_at"].isoformat(),
+        }
+    
+    async def regenerate_api_key(self, user_id: str) -> Optional[str]:
+        """
+        Generate a new API key for an existing user.
+        
+        The old key immediately stops working.
+        Returns the new plaintext key, or None if user doesn't exist.
+        """
+        api_key = f"sk_{secrets.token_urlsafe(24)}"
+        key_hash = self.hash_key(api_key)
+        
+        async with self._pool.acquire() as conn:
+            result = await conn.execute("""
+                UPDATE users 
+                SET api_key_hash = $1, key_created_at = NOW()
+                WHERE id = $2
+            """, key_hash, user_id)
+        
+        # Check if any row was updated
+        if result.split()[-1] == "0":
+            return None
+        
+        logger.info("api_key_regenerated", user_id=user_id)
         return api_key
     
     async def seed_demo_users(self) -> dict:
         """
-        Create demo users and API keys for development.
-
-        Return dict of tier -> api_key for testing
+        Create demo users for development.
+        
+        Returns dict of tier -> api_key for newly created users.
         """
-
         demo_keys = {}
         
         demo_users = [
@@ -179,23 +171,14 @@ class UserDB:
             ("user_pro_001", "pro"),
             ("user_ent_001", "enterprise"),
         ]
-
+        
         for user_id, tier in demo_users:
-            # Create user (ignore if exists)
-            await self.create_user(user_id, tier)
-            
-            # Check if demo key already exists
-            async with self._db.execute(
-                "SELECT key_hash FROM api_keys WHERE user_id = ? AND name = ?",
-                (user_id, f"demo_{tier}")
-            ) as cursor:
-                if await cursor.fetchone() is None:
-                    # Create new demo key
-                    api_key = await self.create_api_key(user_id, f"demo_{tier}")
-                    demo_keys[tier] = api_key
-                    print(f"  {tier.upper()}: {api_key}")
+            api_key = await self.create_user(user_id, tier)
+            if api_key:
+                demo_keys[tier] = api_key
         
         return demo_keys
 
-# Singleton Instance
+
+# Singleton instance
 user_db = UserDB()

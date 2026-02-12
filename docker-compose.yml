@@ -4,15 +4,34 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/stash
       - REDIS_URL=redis://redis:6379
       - STASH_MODE=local
-      - LOG_FORMAT=json
-      - USERS_DB_PATH=/data/users.db
+      - LOG_FORMAT=console
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     volumes:
-      - stash-data:/data  # Named volume (Docker manages permissions)
+      - ./app:/app/app  # Mount for hot reload
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: stash
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   redis:
     image: redis:alpine
@@ -25,4 +44,4 @@ services:
       retries: 3
 
 volumes:
-  stash-data:  # Docker-managed volume
+  postgres_data:

@@ -1,18 +1,32 @@
 """
 Pytest configuration and fixtures.
 
-Fixtures are reusable test setup/teardown functions.
+Uses a temporary PostgreSQL db for testing.
 """
 
 import pytest
+import asyncio
+import os
 from httpx import AsyncClient, ASGITransport
+import fakeredis.aioredis
 
 # Import the FastAPI app
 from app.main import app
 from app.services.redis_service import redis_service
 from app.services.user_db import user_db
 
-import fakeredis.aioredis
+# Use a test database URL - can be overridden by environment variable
+TEST_DATABASE_URL = os.getenv(
+    "TEST_DATABASE_URL",
+    "postgresql://postgres:postgres@localhost:5432/stash_test"
+)
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create event loop for async tests."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
 @pytest.fixture
 def anyio_backend():
@@ -22,9 +36,11 @@ def anyio_backend():
 @pytest.fixture
 async def client():
     """
-    Async HTTP client for testing the API.
-
-    Sets up both fakeredis for stash data and SQLite for auth.
+    Async HTTP client for testing.
+    
+    Sets up:
+    - Fakeredis for stash data (fast, isolated)
+    - Real PostgreSQL for auth (test database)
     """
 
     # Use fakeredis for stash data
@@ -33,17 +49,18 @@ async def client():
         decode_responses=True,
     )
 
-    # Use in-memory SQLite for user auth
-    user_db._db_path = ":memory:"
+    # Connect to test PostgreSQL database
+    original_db_url = user_db._settings.database_url
+    user_db._settings.database_url = TEST_DATABASE_URL
     await user_db.connect()
 
-    # Create test users
-    await user_db.create_user("test_free", "free")
-    await user_db.create_user("test_pro", "pro")
+    # Clean up any existing test data
+    async with user_db._pool.acquire() as conn:
+        await conn.execute("DELETE FROM users WHERE id LIKE 'test_%'")
 
-    # Create test API keys (We'll store these for fixtures)
-    free_key = await user_db.create_api_key("test_free", "test_free_key")
-    pro_key = await user_db.create_api_key("test_pro", "test_pro_key")
+    # Create test users (create_user returns the API key)
+    free_key = await user_db.create_user("test_free", "free")
+    pro_key = await user_db.create_user("test_pro", "pro")
 
     # Store keys for fixtures to access
     app.state.test_free_key = free_key
@@ -56,7 +73,11 @@ async def client():
         yield client
     
     # Cleanup
+    async with user_db._pool.acquire() as conn:
+        await conn.execute("DELETE FROM users WHERE id LIKE 'test_%'")
+    
     await user_db.disconnect()
+    user_db._settings.database_url = original_db_url
 
 @pytest.fixture
 async def free_user_headers(client):

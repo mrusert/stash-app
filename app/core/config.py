@@ -41,9 +41,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json" # json or console
 
-    # User database (SQLite for local, PostgreSQL URL for production)
-    users_db_path: str = "users.db"
+    # Postgres User database
+    database_url: str = "postgresql://postgres:postgres@localhost:5432/stash"
 
+    # Sentry (optional)
+    sentry_dsn: str = ""
+    
     # Tell Pydantic where to find the .env file
     model_config = SettingsConfigDict(
         env_file=".env",

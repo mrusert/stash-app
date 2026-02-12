@@ -22,6 +22,13 @@ env/
 *.log
 EOF
 
+# Database
+*.db
+
+# Docker volumes (if accidentally created locally)
+postgres_data/
+
 # Markdowns
 helper.md
 COURSE.md
+COURSE_PART2.md
